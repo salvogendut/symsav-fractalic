@@ -1,3 +1,5 @@
+![Example Image](fractali1.png)
+![Example Image](fractali2.png)
 # symsav-fractalic
 
 A fractal screensaver for [SymbOS](https://www.symbos.org/) on the Amstrad CPC.
