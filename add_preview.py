@@ -6,7 +6,7 @@ import re
 import struct
 
 STARFIELD_ASM = os.path.join(os.path.dirname(__file__), '../symsav-starfield/Scr-Starfield.asm')
-SAV_FILE = os.path.join(os.path.dirname(__file__), 'fract.sav')
+SAV_FILE = os.path.join(os.path.dirname(__file__), 'fractali.sav')
 
 INSERT_AT = 256
 PREVIEW_PIXELS = 640
