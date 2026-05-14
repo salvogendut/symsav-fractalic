@@ -363,8 +363,12 @@ static void dragon_steps(int count)
     for (i = 0; i < count && draw_idx <= draw_total; i++, draw_idx++) {
         nx = dragon_cx + (int)dir_dx[dragon_dir] * dragon_step_size;
         ny = dragon_cy + (int)dir_dy[dragon_dir] * dragon_step_size;
-        ink = (unsigned char)(1 + ((draw_idx >> 4) % 3));
-        if (ink == 1) ink = 3;
+        // cycle inks 0, 2, 3 (skip ink 1 = black background)
+        switch ((draw_idx >> 4) % 3) {
+            case 0:  ink = 0; break;
+            case 1:  ink = 2; break;
+            default: ink = 3; break;
+        }
         vram_line(dragon_cx, dragon_cy, nx, ny, ink);
         dragon_cx = nx;
         dragon_cy = ny;
