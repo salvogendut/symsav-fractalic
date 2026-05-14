@@ -5,7 +5,7 @@ SCC="${SCC:-../scc/bin/cc}"
 
 "$SCC" fractalic.c \
     -N "Fractalic" \
-    -o fractalic.sav \
+    -o fract.sav \
     -h 512
 
 python3 add_preview.py

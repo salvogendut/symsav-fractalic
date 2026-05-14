@@ -16,18 +16,18 @@ Requires the SCC compiler (set `SCC=` env var if not at `../scc/bin/cc`) and Pyt
 
 Build steps:
 
-1. SCC compiles `fractalic.c` → `fractalic.sav`
+1. SCC compiles `fractalic.c` → `fract.sav`
 2. `add_preview.py` patches the preview thumbnail into the binary at file offset 256
 
-Output: `fractalic.sav`
+Output: `fract.sav`
 
 ---
 
 ## Installing
 
-1. Copy `fractalic.sav` into your `C:\SYMBOS\` directory.
+1. Copy `fract.sav` into your `C:\SYMBOS\` directory.
 2. Open **Display Properties** and go to the **Screen Saver** tab.
-3. Click **Browse** and select `fractalic.sav`.
+3. Click **Browse** and select `fract.sav`.
 4. Click **Setup** to configure the effect:
    - **Fractal**: Sierp. / Koch / Dragon / Fern / **Random** — which fractal to draw. Choosing *Random* cycles through all four types in a different random order each time.
    - **Depth**: Low / Med / High — iteration count or point density (controls detail level and rendering time)
