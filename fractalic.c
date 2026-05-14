@@ -221,10 +221,14 @@ static void koch_init(void)
     int i, j, n, ns, p1x, p1y, p2x, p2y, mx, my, px, py, dx, dy, apx, apy;
     int depth;
 
-    // Initial equilateral triangle, slightly inset
-    p1x = 160; p1y = 14;
-    p2x = 24;  p2y = 188;
-    mx  = 296; my  = 188;
+    // Initial equilateral triangle sized so the snowflake fits on screen.
+    // W=160, H=W*7/8=140 (7/8 approximates sqrt(3)/2).
+    // Depth-1 bottom bump extends (W/3)*7/8 = 47 px below the base.
+    // Total footprint height = 140+47 = 187; centred in 200 px:
+    //   top y=7, base y=147, max bump y=194.
+    p1x = 160; p1y = 7;
+    p2x = 80;  p2y = 147;
+    mx  = 240; my  = 147;
 
     koch_x0[0] = p1x; koch_y0[0] = p1y; koch_x1[0] = p2x; koch_y1[0] = p2y;
     koch_x0[1] = p2x; koch_y0[1] = p2y; koch_x1[1] = mx;  koch_y1[1] = my;
@@ -359,8 +363,12 @@ static void dragon_steps(int count)
     for (i = 0; i < count && draw_idx <= draw_total; i++, draw_idx++) {
         nx = dragon_cx + (int)dir_dx[dragon_dir] * dragon_step_size;
         ny = dragon_cy + (int)dir_dy[dragon_dir] * dragon_step_size;
-        ink = (unsigned char)(1 + ((draw_idx >> 4) % 3));
-        if (ink == 1) ink = 3;
+        // cycle inks 0, 2, 3 (skip ink 1 = black background)
+        switch ((draw_idx >> 4) % 3) {
+            case 0:  ink = 0; break;
+            case 1:  ink = 2; break;
+            default: ink = 3; break;
+        }
         vram_line(dragon_cx, dragon_cy, nx, ny, ink);
         dragon_cx = nx;
         dragon_cy = ny;
@@ -377,19 +385,21 @@ static void dragon_steps(int count)
 
 // ---------------------------------------------------------------------------
 // Barnsley Fern — IFS chaos game
-// Fixed-point scale: 1.0 = 256
-// Coordinates: x in [-3,3], y in [0,10] → screen mapped
+// Fixed-point scale: 1.0 = 32
+// Scale 32 keeps all 16-bit products within range (max ~8720 for T2).
+// With scale 256 the 0.85*y term reaches 218*2560=558080 — overflow.
 // ---------------------------------------------------------------------------
-// Transform coefficients * 256 (scale = 256 = 1.0)
-// T1 (p=1%):  x'=0,          y'=0.16y        → y'=41*y>>8
-// T2 (p=85%): x'=0.85x+0.04y y'=-0.04x+0.85y+1.6
-// T3 (p=7%):  x'=0.2x-0.26y  y'=0.23x+0.22y+1.6
-// T4 (p=7%):  x'=-0.15x+0.28y y'=0.26x+0.24y+0.44
+// Coefficients * 32 (rounded):
+// T1 (p=1%):  x'=0,         y'=0.16y       → 0.16*32=5
+// T2 (p=85%): x'=0.85x+0.04y y'=-0.04x+0.85y+1.6 → 27, 1, 51
+// T3 (p=7%):  x'=0.2x-0.26y  y'=0.23x+0.22y+1.6  → 6,8,7,7,51
+// T4 (p=7%):  x'=-0.15x+0.28y y'=0.26x+0.24y+0.44 → 5,9,8,8,14
+//
+// Screen mapping at scale 32:
+//   x real range ≈ [-2.2, 2.7] → sx = 160 + fern_fx*2  (64 px/unit)
+//   y real range ≈ [0, 10]     → sy = 199 - fern_fy*5/8 (20 px/unit, inverted)
 
-// Coefficients * 256, stored as signed char (fits for small coefficients)
-// Stored as int for the multiply to stay in range
-
-_transfer int fern_fx, fern_fy;  // current point, scale 256
+_transfer int fern_fx, fern_fy;  // current point, scale 32
 
 static void fern_init(void)
 {
@@ -397,9 +407,9 @@ static void fern_init(void)
     fern_fy = 0;
     draw_idx  = 0;
     switch (frac_depth) {
-        case 1:  draw_total = 10000; break;
-        case 3:  draw_total = 40000; break;
-        default: draw_total = 22000; break;
+        case 1:  draw_total = 8000;  break;
+        case 3:  draw_total = 30000; break;
+        default: draw_total = 16000; break;
     }
 }
 
@@ -412,33 +422,33 @@ static void fern_steps(int n)
         r = rand() % 100;
 
         if (r == 0) {
-            // T1: x'=0, y'=0.16y (41/256 * y)
+            // T1: x'=0, y'=0.16y  (5/32 = 0.156 ≈ 0.16)
             nx = 0;
-            ny = 41 * fern_fy / 256;
+            ny = fern_fy * 5 / 32;
         } else if (r < 86) {
-            // T2: x'=0.85x+0.04y, y'=-0.04x+0.85y+1.6*256
-            nx = (218 * fern_fx + 10 * fern_fy) / 256;
-            ny = (-10 * fern_fx + 218 * fern_fy) / 256 + 410;
+            // T2: x'=0.85x+0.04y, y'=-0.04x+0.85y+1.6
+            // max product: 27*320 = 8640 — fits in 16-bit
+            nx = (27 * fern_fx + fern_fy) / 32;
+            ny = (-fern_fx + 27 * fern_fy) / 32 + 51;
         } else if (r < 93) {
-            // T3: x'=0.2x-0.26y, y'=0.23x+0.22y+1.6*256
-            nx = (51 * fern_fx - 67 * fern_fy) / 256;
-            ny = (59 * fern_fx + 56 * fern_fy) / 256 + 410;
+            // T3: x'=0.2x-0.26y, y'=0.23x+0.22y+1.6
+            nx = (6 * fern_fx - 8 * fern_fy) / 32;
+            ny = (7 * fern_fx + 7 * fern_fy) / 32 + 51;
         } else {
-            // T4: x'=-0.15x+0.28y, y'=0.26x+0.24y+0.44*256
-            nx = (-38 * fern_fx + 72 * fern_fy) / 256;
-            ny = (67 * fern_fx + 61 * fern_fy) / 256 + 113;
+            // T4: x'=-0.15x+0.28y, y'=0.26x+0.24y+0.44
+            nx = (-5 * fern_fx + 9 * fern_fy) / 32;
+            ny = (8 * fern_fx + 8 * fern_fy) / 32 + 14;
         }
 
         fern_fx = nx;
         fern_fy = ny;
 
-        // Map to screen: x in [-3*256, 3*256] -> [0, 319]
-        // y in [0, 10*256] -> [199, 0] (inverted)
-        sx = (fern_fx + 768) * 319 / 1536;
-        sy = 199 - fern_fy * 199 / 2560;
+        // Map to screen; vram_pixel clips out-of-bounds coordinates
+        sx = 160 + fern_fx * 2;
+        sy = 199 - fern_fy * 5 / 8;   // fern_fy*5 max=1600, no overflow
 
-        // Color by height
-        ink = (fern_fy > 1280) ? 3 : (fern_fy > 512) ? 2 : 0;
+        // Color by real y: stem white, mid-fronds dim, tips bright
+        ink = (fern_fy > 200) ? 3 : (fern_fy > 64) ? 2 : 0;
         vram_pixel(sx, sy, ink);
     }
 }
