@@ -221,10 +221,14 @@ static void koch_init(void)
     int i, j, n, ns, p1x, p1y, p2x, p2y, mx, my, px, py, dx, dy, apx, apy;
     int depth;
 
-    // Initial equilateral triangle, slightly inset
-    p1x = 160; p1y = 14;
-    p2x = 24;  p2y = 188;
-    mx  = 296; my  = 188;
+    // Initial equilateral triangle sized so the snowflake fits on screen.
+    // W=160, H=W*7/8=140 (7/8 approximates sqrt(3)/2).
+    // Depth-1 bottom bump extends (W/3)*7/8 = 47 px below the base.
+    // Total footprint height = 140+47 = 187; centred in 200 px:
+    //   top y=7, base y=147, max bump y=194.
+    p1x = 160; p1y = 7;
+    p2x = 80;  p2y = 147;
+    mx  = 240; my  = 147;
 
     koch_x0[0] = p1x; koch_y0[0] = p1y; koch_x1[0] = p2x; koch_y1[0] = p2y;
     koch_x0[1] = p2x; koch_y0[1] = p2y; koch_x1[1] = mx;  koch_y1[1] = my;
