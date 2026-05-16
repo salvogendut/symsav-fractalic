@@ -3,7 +3,7 @@
 
 SCC="${SCC:-../scc/bin/cc}"
 
-"$SCC" fractalic.c \
+"$SCC" fractalic.c fractalic_msx.s \
     -N "Fractalic" \
     -o fractali.sav \
     -h 512

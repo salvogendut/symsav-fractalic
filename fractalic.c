@@ -1,5 +1,6 @@
 // fractalic.c — Fractal screensaver for SymbOS
-// Renders fractals directly to CPC Mode-1 VRAM via Bank_Copy.
+// Renders fractals directly to CPC Mode-1 VRAM via Bank_Copy,
+// or MSX Screen-7 VRAM via VDP port writes.
 // Fractal types: Sierpinski triangle (chaos game), Koch snowflake,
 // Dragon curve, Barnsley fern (IFS).
 // SymbOS C port by Salvatore Bognanni
@@ -10,6 +11,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+extern void vdp_fill(unsigned int vram_addr, unsigned char fill_byte, unsigned short len);
+
 #define MSC_SAV_INIT   1
 #define MSC_SAV_START  2
 #define MSC_SAV_CONFIG 3
@@ -17,6 +20,10 @@
 
 #define SCREEN_W  320
 #define SCREEN_H  200
+
+// MSX Screen 7: 512x212, 2 pixels/byte (4-bit colour), linear VRAM
+#define MSX_W  512
+#define MSX_H  212
 
 // ---------------------------------------------------------------------------
 // CPC Mode-1 VRAM
@@ -27,6 +34,10 @@
 // ---------------------------------------------------------------------------
 
 static const unsigned char ink_byte[4] = { 0x00, 0xF0, 0x0F, 0xFF };
+
+// MSX: both nibbles = same colour index (writes 2 adjacent pixels at once)
+// ink0=white(0x88) ink1=black(0x11) ink2=dim/green(0x99) ink3=bright/lgreen(0xAA)
+static const unsigned char msx_ink_byte[4] = { 0x88, 0x11, 0x99, 0xAA };
 
 // Fractal type IDs stored in cfgdat[4]
 #define FRAC_SIERPINSKI  1
@@ -65,6 +76,10 @@ _data int dragon_n_turns;   // total number of turns
 // Animation state
 // ---------------------------------------------------------------------------
 
+_transfer char          is_msx;
+_transfer unsigned short screen_w;
+_transfer unsigned short screen_h;
+
 _transfer unsigned char frac_type;       // currently active fractal type
 _transfer unsigned char frac_cfg_type;   // user-configured type (0 = cycle all)
 _transfer unsigned char frac_depth;
@@ -84,6 +99,10 @@ _transfer int           draw_total;      // total segments/steps
 static void vram_clear(void)
 {
     unsigned char k;
+    if (is_msx) {
+        vdp_fill(0u, 0x11u, 54272u);   // 212 rows x 256 bytes = background
+        return;
+    }
     for (k = 0; k < 8; k++) {
         Bank_Copy(0,
             (char *)(0xC000u + (unsigned short)k * 0x0800u),
@@ -96,7 +115,14 @@ static void vram_pixel(int x, int y, unsigned char ink)
     unsigned short addr;
     unsigned char pos, lo_mask, hi_mask;
 
-    if (x < 0 || x >= SCREEN_W || y < 0 || y >= SCREEN_H) return;
+    if (x < 0 || x >= (int)screen_w || y < 0 || y >= (int)screen_h) return;
+
+    if (is_msx) {
+        vdp_fill((unsigned int)(unsigned short)y * 256u
+                 + (unsigned int)((unsigned short)x >> 1),
+                 msx_ink_byte[ink & 3], 1u);
+        return;
+    }
 
     addr = 0xC000u
          + (unsigned short)(y >> 3) * 80u
@@ -137,7 +163,15 @@ static void vram_line(int x0, int y0, int x1, int y1, unsigned char ink)
 static void vram_fill_rect(int x, int y, int w, int h, unsigned char ink)
 {
     unsigned short addr;
+    unsigned short urow;
     int row, bx, bw;
+
+    if (is_msx) {
+        for (urow = (unsigned short)y; urow < (unsigned short)(y + h); urow++)
+            vdp_fill((unsigned int)urow * 256u + (unsigned int)((unsigned short)(x >> 1)),
+                     msx_ink_byte[ink & 3], (unsigned short)(w >> 1));
+        return;
+    }
 
     bx = x >> 2;
     bw = w >> 2;
@@ -157,25 +191,26 @@ static void vram_fill_rect(int x, int y, int w, int h, unsigned char ink)
 // ---------------------------------------------------------------------------
 // Sierpinski Triangle — chaos game
 // ---------------------------------------------------------------------------
-// Vertices of equilateral triangle on screen
-#define SIER_AX  160
-#define SIER_AY  10
-#define SIER_BX  20
-#define SIER_BY  188
-#define SIER_CX  300
-#define SIER_CY  188
+// Vertices computed at init time from screen dimensions.
 
-// Ink for each vertex region
 static const unsigned char sier_ink[3] = { 3, 2, 0 };  // bright, dim, white
 
+_transfer int sier_ax, sier_ay, sier_bx, sier_by, sier_cx, sier_cy;
 _transfer int sier_px, sier_py;
 _transfer int sier_step;  // steps done so far
 _transfer int sier_total; // total steps
 
 static void sierpinski_init(void)
 {
-    sier_px = SIER_AX;
-    sier_py = SIER_AY;
+    sier_ax = (int)screen_w / 2;
+    sier_ay = 10;
+    sier_bx = (int)screen_w / 16;
+    sier_by = (int)screen_h * 94 / 100;
+    sier_cx = (int)screen_w * 15 / 16;
+    sier_cy = sier_by;
+
+    sier_px = sier_ax;
+    sier_py = sier_ay;
     sier_step = 0;
 
     switch (frac_depth) {
@@ -192,9 +227,9 @@ static void sierpinski_steps(int n)
     for (i = 0; i < n && sier_step < sier_total; i++, sier_step++) {
         v = rand() % 3;
         switch (v) {
-            case 0: nx = (sier_px + SIER_AX) >> 1; ny = (sier_py + SIER_AY) >> 1; break;
-            case 1: nx = (sier_px + SIER_BX) >> 1; ny = (sier_py + SIER_BY) >> 1; break;
-            default:nx = (sier_px + SIER_CX) >> 1; ny = (sier_py + SIER_CY) >> 1; break;
+            case 0: nx = (sier_px + sier_ax) >> 1; ny = (sier_py + sier_ay) >> 1; break;
+            case 1: nx = (sier_px + sier_bx) >> 1; ny = (sier_py + sier_by) >> 1; break;
+            default:nx = (sier_px + sier_cx) >> 1; ny = (sier_py + sier_cy) >> 1; break;
         }
         sier_px = nx;
         sier_py = ny;
@@ -210,6 +245,9 @@ static void sierpinski_steps(int n)
 // perp of (bx-ax, by-ay) rotated 90° CCW = (-(by-ay), bx-ax)
 // apex.x = (ax+bx)/2 - (by-ay)*7/8  (interior of snowflake, so subtract)
 // apex.y = (ay+by)/2 + (bx-ax)*7/8
+//
+// Triangle size W is derived from screen height so the snowflake fits:
+// total height = W*7/6, so W = 6*(screen_h - 13)/7.
 
 _data int tmp_x0[KOCH_MAX_SEGS];
 _data int tmp_y0[KOCH_MAX_SEGS];
@@ -219,16 +257,16 @@ _data int tmp_y1[KOCH_MAX_SEGS];
 static void koch_init(void)
 {
     int i, j, n, ns, p1x, p1y, p2x, p2y, mx, my, px, py, dx, dy, apx, apy;
-    int depth;
+    int depth, W;
 
-    // Initial equilateral triangle sized so the snowflake fits on screen.
-    // W=160, H=W*7/8=140 (7/8 approximates sqrt(3)/2).
-    // Depth-1 bottom bump extends (W/3)*7/8 = 47 px below the base.
-    // Total footprint height = 140+47 = 187; centred in 200 px:
-    //   top y=7, base y=147, max bump y=194.
-    p1x = 160; p1y = 7;
-    p2x = 80;  p2y = 147;
-    mx  = 240; my  = 147;
+    // W derived from screen height: total footprint = W*7/6, leaving 13px margin.
+    W   = 6 * ((int)screen_h - 13) / 7;
+    p1x = (int)screen_w / 2;
+    p1y = 7;
+    p2x = p1x - W / 2;
+    p2y = p1y + W * 7 / 8;
+    mx  = p1x + W / 2;
+    my  = p2y;
 
     koch_x0[0] = p1x; koch_y0[0] = p1y; koch_x1[0] = p2x; koch_y1[0] = p2y;
     koch_x0[1] = p2x; koch_y0[1] = p2y; koch_x1[1] = mx;  koch_y1[1] = my;
@@ -347,11 +385,9 @@ _transfer int dragon_step_size;
 
 static void dragon_reset_pos(void)
 {
-    // Estimate scale: n_turns steps, each moving step_size pixels
-    // Center on screen
     dragon_step_size = 2;
-    dragon_cx = SCREEN_W / 2;
-    dragon_cy = SCREEN_H / 2;
+    dragon_cx = (int)screen_w / 2;
+    dragon_cy = (int)screen_h / 2;
     dragon_dir = 0;
     draw_idx = 0;
 }
@@ -396,8 +432,8 @@ static void dragon_steps(int count)
 // T4 (p=7%):  x'=-0.15x+0.28y y'=0.26x+0.24y+0.44 → 5,9,8,8,14
 //
 // Screen mapping at scale 32:
-//   x real range ≈ [-2.2, 2.7] → sx = 160 + fern_fx*2  (64 px/unit)
-//   y real range ≈ [0, 10]     → sy = 199 - fern_fy*5/8 (20 px/unit, inverted)
+//   CPC:  sx = 160 + fern_fx*2,   sy = 199 - fern_fy*5/8
+//   MSX:  sx = 256 + fern_fx*3,   sy = 211 - fern_fy*2/3
 
 _transfer int fern_fx, fern_fy;  // current point, scale 32
 
@@ -444,8 +480,13 @@ static void fern_steps(int n)
         fern_fy = ny;
 
         // Map to screen; vram_pixel clips out-of-bounds coordinates
-        sx = 160 + fern_fx * 2;
-        sy = 199 - fern_fy * 5 / 8;   // fern_fy*5 max=1600, no overflow
+        if (is_msx) {
+            sx = (int)screen_w / 2 + fern_fx * 3;
+            sy = ((int)screen_h - 1) - fern_fy * 2 / 3;
+        } else {
+            sx = 160 + fern_fx * 2;
+            sy = 199 - fern_fy * 5 / 8;   // fern_fy*5 max=1600, no overflow
+        }
 
         // Color by real y: stem white, mid-fronds dim, tips bright
         ink = (fern_fy > 200) ? 3 : (fern_fy > 64) ? 2 : 0;
@@ -695,6 +736,16 @@ void start_animation(void)
     unsigned short mx0, my0;
     unsigned short resp;
 
+    // Detect platform and set screen dimensions
+    is_msx = ((Sys_Type() & TYPE_MSX) != 0) ? 1 : 0;
+    if (is_msx) {
+        screen_w = MSX_W;
+        screen_h = MSX_H;
+    } else {
+        screen_w = SCREEN_W;
+        screen_h = SCREEN_H;
+    }
+
     frac_cfg_type = (unsigned char)cfgdat[4];
     frac_depth    = (unsigned char)cfgdat[5];
     speed         = (unsigned char)cfgdat[6];
@@ -710,7 +761,7 @@ void start_animation(void)
     else
         frac_type = frac_cfg_type;
 
-    // 5-second pause = ~300 ticks (each Idle ≈ 1/60 s on CPC)
+    // 5-second pause = ~300 ticks (each Idle ≈ 1/60 s)
     anim_pause = 300;
 
     srand((unsigned int)Sys_Counter());
@@ -725,8 +776,8 @@ void start_animation(void)
     anim_ctrl[0].param  = AREA_16COLOR | COLOR_BLACK;
     anim_ctrl[0].x      = 0;
     anim_ctrl[0].y      = 0;
-    anim_ctrl[0].w      = SCREEN_W;
-    anim_ctrl[0].h      = SCREEN_H;
+    anim_ctrl[0].w      = screen_w;
+    anim_ctrl[0].h      = screen_h;
     anim_ctrl[0].unused = 0;
 
     memset(&anim_cg, 0, sizeof(anim_cg));
@@ -738,14 +789,14 @@ void start_animation(void)
     anim_win.state    = WIN_NORMAL;
     anim_win.flags    = WIN_NOTTASKBAR | WIN_NOTMOVEABLE;
     anim_win.pid      = _sympid;
-    anim_win.w        = SCREEN_W;
-    anim_win.h        = SCREEN_H;
-    anim_win.wfull    = SCREEN_W;
-    anim_win.hfull    = SCREEN_H;
+    anim_win.w        = screen_w;
+    anim_win.h        = screen_h;
+    anim_win.wfull    = screen_w;
+    anim_win.hfull    = screen_h;
     anim_win.wmin     = 32;
     anim_win.hmin     = 24;
-    anim_win.wmax     = SCREEN_W;
-    anim_win.hmax     = SCREEN_H;
+    anim_win.wmax     = screen_w;
+    anim_win.hmax     = screen_h;
     anim_win.title    = empty_str;
     anim_win.status   = empty_str;
     anim_win.controls = &anim_cg;
@@ -757,10 +808,12 @@ void start_animation(void)
     vram_clear();
 
     Idle();
-    // Restore bottom char row (taskbar area)
-    for (b = 0; b < 8; b++)
-        Bank_Copy(0, (char *)(0xC000u + (unsigned short)b * 0x0800u + 1920u),
-                  _symbank, (char *)zero_plane, 80u);
+    // Restore bottom char row (taskbar area) — CPC only
+    if (!is_msx) {
+        for (b = 0; b < 8; b++)
+            Bank_Copy(0, (char *)(0xC000u + (unsigned short)b * 0x0800u + 1920u),
+                      _symbank, (char *)zero_plane, 80u);
+    }
 
     fractal_init();
     anim_stage = 0;
@@ -793,9 +846,11 @@ void start_animation(void)
         anim_tick();
 
         Idle();
-        for (b = 0; b < 8; b++)
-            Bank_Copy(0, (char *)(0xC000u + (unsigned short)b * 0x0800u + 1920u),
-                      _symbank, (char *)zero_plane, 80u);
+        if (!is_msx) {
+            for (b = 0; b < 8; b++)
+                Bank_Copy(0, (char *)(0xC000u + (unsigned short)b * 0x0800u + 1920u),
+                          _symbank, (char *)zero_plane, 80u);
+        }
     }
 }
 
